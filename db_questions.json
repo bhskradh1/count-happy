@@ -1,0 +1,34 @@
+[
+  {
+    "id": "cq_1",
+    "subject": "Physics",
+    "exam": "IOE",
+    "question": "A simple pendulum of length L is placed inside a lift falling with acceleration g/3. What is its new time period of oscillation?",
+    "options": [
+      "T = 2π√(3L/2g)",
+      "T = 2π√(L/g)",
+      "T = 2π√(3L/4g)",
+      "T = 2π√(L/3g)"
+    ],
+    "correctIndex": 0,
+    "explanation": "The effective acceleration in a downward accelerating lift is g_eff = g - a = g - g/3 = 2g/3. The time period is T = 2π√(L/g_eff) = 2π√(L / (2g/3)) = 2π√(3L/2g).",
+    "author": "Prof. Ghimire",
+    "createdAt": "2026-05-23T05:18:43.267Z"
+  },
+  {
+    "id": "cq_2",
+    "subject": "Chemistry",
+    "exam": "BOTH",
+    "question": "According to Bronsted-Lowry concept, which of the following acts as both conjugate acid and conjugate base?",
+    "options": [
+      "H2O",
+      "SO4(2-)",
+      "NH4(+)",
+      "H2SO4"
+    ],
+    "correctIndex": 0,
+    "explanation": "H2O is amphiprotic; it can gain a proton to become H3O+ (conjugate acid role) or lose a proton to become OH- (conjugate base role).",
+    "author": "CEE Gold Medalist",
+    "createdAt": "2026-05-23T05:18:43.267Z"
+  }
+]
