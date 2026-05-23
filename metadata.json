@@ -1,0 +1,6 @@
+{
+  "name": "IOE and CEE Entrance Arena",
+  "description": "A gamified solo/multiplayer MCQ training app for Nepal's IOE (Engineering) and CEE (Medical) aspirants featuring a monster-chase survival solo mode and real-time simulated relative dynamic tug-of-war multiplayer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
