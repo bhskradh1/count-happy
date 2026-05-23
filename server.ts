@@ -11,7 +11,10 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-const PORT = 3000;
+const portArgIdx = process.argv.indexOf("--port");
+const PORT = Number(
+  (portArgIdx !== -1 && process.argv[portArgIdx + 1]) || process.env.PORT || 8080
+);
 
 // Database File Paths
 const LEADERBOARD_FILE = path.join(process.cwd(), "db_leaderboard.json");
