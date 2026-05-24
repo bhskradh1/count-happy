@@ -183,26 +183,55 @@ export default function App() {
   }, [userScore, userId]);
 
 
-  // Loop A: Polling Presence and New Invites
+  // Loop A: Polling Presence and New Invites (via Lovable Cloud)
   useEffect(() => {
     if (!userId) return;
 
     const pollPresenceEnv = async () => {
       try {
-        const res = await fetch("/api/users/online", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId,
-            name: aspirantName,
-            score: userScore
-          })
+        await supabase.from("online_presence").upsert({
+          user_id: userId,
+          name: aspirantName,
+          score: userScore,
+          rank: getRankTier(userScore),
+          last_active: new Date().toISOString(),
         });
-        const data = await res.json();
-        if (data.success) {
-          setOnlineUsersList(data.onlineUsers || []);
-          setIncomingInvites(data.incomingInvites || []);
-        }
+
+        const cutoffPresence = new Date(Date.now() - 8000).toISOString();
+        const cutoffInvites = new Date(Date.now() - 20000).toISOString();
+
+        const [{ data: others }, { data: invs }] = await Promise.all([
+          supabase
+            .from("online_presence")
+            .select("user_id, name, score, rank")
+            .gt("last_active", cutoffPresence)
+            .neq("user_id", userId),
+          supabase
+            .from("duel_invites")
+            .select("*")
+            .eq("receiver_id", userId)
+            .eq("status", "PENDING")
+            .gt("created_at", cutoffInvites),
+        ]);
+
+        setOnlineUsersList(
+          (others || []).map((u: any) => ({
+            userId: u.user_id,
+            name: u.name,
+            score: u.score,
+            rank: u.rank,
+          })),
+        );
+        setIncomingInvites(
+          (invs || []).map((i: any) => ({
+            lobbyId: i.lobby_id,
+            senderId: i.sender_id,
+            senderName: i.sender_name,
+            exam: i.exam,
+            subject: i.subject,
+            totalQuestions: i.total_questions,
+          })),
+        );
       } catch (e) {
         console.error("Presence beacon failed", e);
       }
@@ -213,99 +242,108 @@ export default function App() {
     return () => clearInterval(timer);
   }, [userId, aspirantName, userScore]);
 
-  // Loop B: Live Battle Lobby Synchronizer
+  // Loop B: Live Battle Lobby Synchronizer (Cloud DB poll)
   useEffect(() => {
     if (!activeLobby) return;
 
     const syncLobbyLoop = async () => {
       try {
-        const res = await fetch("/api/lobby/sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            lobbyId: activeLobby.lobbyId,
-            userId
-          })
-        });
-        const data = await res.json();
-        if (data.success && data.lobby) {
-          const lobby = data.lobby;
-          setActiveLobby(lobby);
-          setMultiplayerFailLimit(data.failLimit || 1);
-          
-          if (isLobbyHost) {
-            setP1ConsecutiveWrong(data.hostFailCount || 0);
-            setP2ConsecutiveWrong(data.guestFailCount || 0);
-          } else {
-            setP1ConsecutiveWrong(data.guestFailCount || 0); // perspective aligned
-            setP2ConsecutiveWrong(data.hostFailCount || 0);
-          }
+        const { data: row } = await supabase
+          .from("duel_lobbies")
+          .select("*")
+          .eq("lobby_id", activeLobby.lobbyId)
+          .maybeSingle();
+        if (!row) return;
 
-          // Compute Opponent (p2) Correct/Incorrect Streak dynamically
-          const oppScore = isLobbyHost ? lobby.guestScore : lobby.hostScore;
-          const oppIdx = isLobbyHost ? lobby.guestIndex : lobby.hostIndex;
-          const oppWrong = isLobbyHost ? (lobby.guestConsecutiveWrong || 0) : (lobby.hostConsecutiveWrong || 0);
-          
-          if (oppIdx !== prevOppIndexRef.current || oppScore !== prevOppScoreRef.current) {
-            if (oppWrong > prevOppWrongRef.current) {
-              setP2Streak(0);
-            } else if (oppScore > prevOppScoreRef.current) {
-              setP2Streak((prev) => prev + 1);
-            }
-            prevOppIndexRef.current = oppIdx;
-            prevOppScoreRef.current = oppScore;
-            prevOppWrongRef.current = oppWrong;
-          } else if (oppWrong > prevOppWrongRef.current) {
+        const lobby = {
+          lobbyId: row.lobby_id,
+          hostId: row.host_id,
+          hostName: row.host_name,
+          hostScore: row.host_score,
+          hostIndex: row.host_index,
+          hostConsecutiveWrong: row.host_consecutive_wrong,
+          guestId: row.guest_id,
+          guestName: row.guest_name,
+          guestScore: row.guest_score,
+          guestIndex: row.guest_index,
+          guestConsecutiveWrong: row.guest_consecutive_wrong,
+          status: row.status,
+          exam: row.exam,
+          subject: row.subject,
+          customTopic: row.custom_topic,
+          questions: (row.questions as any) || [],
+          ropePosition: row.rope_position,
+          numQuestions: row.num_questions,
+          winnerId: row.winner_id,
+        };
+        setActiveLobby(lobby);
+        const failLimit = Math.max(1, Math.round(0.1 * lobby.numQuestions));
+        setMultiplayerFailLimit(failLimit);
+
+        if (isLobbyHost) {
+          setP1ConsecutiveWrong(lobby.hostConsecutiveWrong || 0);
+          setP2ConsecutiveWrong(lobby.guestConsecutiveWrong || 0);
+        } else {
+          setP1ConsecutiveWrong(lobby.guestConsecutiveWrong || 0);
+          setP2ConsecutiveWrong(lobby.hostConsecutiveWrong || 0);
+        }
+
+        const oppScore = isLobbyHost ? lobby.guestScore : lobby.hostScore;
+        const oppIdx = isLobbyHost ? lobby.guestIndex : lobby.hostIndex;
+        const oppWrong = isLobbyHost ? lobby.guestConsecutiveWrong : lobby.hostConsecutiveWrong;
+
+        if (oppIdx !== prevOppIndexRef.current || oppScore !== prevOppScoreRef.current) {
+          if (oppWrong > prevOppWrongRef.current) {
             setP2Streak(0);
-            prevOppWrongRef.current = oppWrong;
+          } else if (oppScore > prevOppScoreRef.current) {
+            setP2Streak((prev) => prev + 1);
           }
+          prevOppIndexRef.current = oppIdx;
+          prevOppScoreRef.current = oppScore;
+          prevOppWrongRef.current = oppWrong;
+        } else if (oppWrong > prevOppWrongRef.current) {
+          setP2Streak(0);
+          prevOppWrongRef.current = oppWrong;
+        }
 
-          setRopePosition(lobby.ropePosition);
+        setRopePosition(lobby.ropePosition);
 
-          if (lobby.status === "ACTIVE") {
-            setAwaitingLobbyAccept(false);
-            if (!isGameActive) {
-              setPlayer1Name(isLobbyHost ? lobby.hostName : lobby.guestName);
-              setPlayer2Name(isLobbyHost ? lobby.guestName : lobby.hostName);
-              setActiveQuestionList(lobby.questions || []);
-              setCurrentIdx(isLobbyHost ? lobby.hostIndex : lobby.guestIndex);
-              
-              setGameOver(false);
-              setVictoryState(false);
-              setIsGameActive(true);
+        if (lobby.status === "ACTIVE") {
+          setAwaitingLobbyAccept(false);
+          if (!isGameActive) {
+            setPlayer1Name(isLobbyHost ? lobby.hostName : lobby.guestName);
+            setPlayer2Name(isLobbyHost ? lobby.guestName : lobby.hostName);
+            setActiveQuestionList(lobby.questions || []);
+            setCurrentIdx(isLobbyHost ? lobby.hostIndex : lobby.guestIndex);
+            setGameOver(false);
+            setVictoryState(false);
+            setIsGameActive(true);
+            setTimeLeft(timerLimit);
+            startTimer();
+          } else {
+            const ourClientIndex = isLobbyHost ? lobby.hostIndex : lobby.guestIndex;
+            if (ourClientIndex !== currentIdx) {
+              setCurrentIdx(ourClientIndex);
+              setSelectedOptionIdx(null);
+              setIsAnswerSubmitted(false);
               setTimeLeft(timerLimit);
               startTimer();
-            } else {
-              // Align current question index index
-              const ourClientIndex = isLobbyHost ? lobby.hostIndex : lobby.guestIndex;
-              if (ourClientIndex !== currentIdx) {
-                // If the next screen transition is requested, step locally
-                setCurrentIdx(ourClientIndex);
-                setSelectedOptionIdx(null);
-                setIsAnswerSubmitted(false);
-                setTimeLeft(timerLimit);
-                startTimer();
-              }
             }
-          } else if (lobby.status === "COMPLETED") {
-            setIsGameActive(false);
-            clearTimer();
-            
-            // Determine result screen
-            if (lobby.winnerId === userId) {
-              setVictoryState(true);
-              setGameOver(false);
-              setUserScore(prev => prev + 120);
-            } else {
-              setGameOver(true);
-              setVictoryState(false);
-              setUserScore(prev => Math.max(1000, prev - 50));
-            }
-
-            // Fire retro synths
-            playSynthSound(lobby.winnerId === userId ? "victory" : "gameover");
-            setActiveLobby(null);
           }
+        } else if (lobby.status === "COMPLETED") {
+          setIsGameActive(false);
+          clearTimer();
+          if (lobby.winnerId === userId) {
+            setVictoryState(true);
+            setGameOver(false);
+            setUserScore((prev) => prev + 120);
+          } else {
+            setGameOver(true);
+            setVictoryState(false);
+            setUserScore((prev) => Math.max(1000, prev - 50));
+          }
+          playSynthSound(lobby.winnerId === userId ? "victory" : "gameover");
+          setActiveLobby(null);
         }
       } catch (e) {
         console.error("Lobby replication slip", e);
@@ -324,100 +362,186 @@ export default function App() {
     setIsLobbyHost(true);
 
     try {
-      const res = await fetch("/api/invites/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          senderId: userId,
-          senderName: aspirantName,
-          receiverId: receiverUid,
-          exam,
-          subject,
-          customTopic,
-          totalQuestions: totalQuestionsCount
-        })
+      const lobbyId = "lobby_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+      const numQs = totalQuestionsCount;
+
+      const { error: lobbyErr } = await supabase.from("duel_lobbies").insert({
+        lobby_id: lobbyId,
+        host_id: userId,
+        host_name: aspirantName,
+        host_score: userScore,
+        guest_id: receiverUid,
+        guest_name: "Challenger",
+        guest_score: 1000,
+        status: "WAITING",
+        exam,
+        subject,
+        custom_topic: customTopic,
+        num_questions: numQs,
       });
-      const data = await res.json();
-      if (data.success && data.lobbyId) {
-        setInviteStatusMessage(`Signals loaded successfully. Waiting for ${receiverUid} to accept continuous-survival MCQ battle...`);
-        // Start passive sync to wait for state to change to active
-        setActiveLobby({ lobbyId: data.lobbyId, status: "WAITING" });
-      } else {
-        setAwaitingLobbyAccept(false);
-        alert(data.error || "Aspirant reject challenge stream. Make sure they are online!");
-      }
-    } catch {
+      if (lobbyErr) throw lobbyErr;
+
+      const { error: invErr } = await supabase.from("duel_invites").insert({
+        lobby_id: lobbyId,
+        sender_id: userId,
+        sender_name: aspirantName,
+        receiver_id: receiverUid,
+        exam,
+        subject,
+        custom_topic: customTopic,
+        status: "PENDING",
+        num_questions: numQs,
+        total_questions: numQs,
+      });
+      if (invErr) throw invErr;
+
+      setInviteStatusMessage(`Signals loaded successfully. Waiting for opponent to accept continuous-survival MCQ battle...`);
+      setActiveLobby({ lobbyId, status: "WAITING" });
+    } catch (e: any) {
       setAwaitingLobbyAccept(false);
-      alert("Transmission conflict: Matchmaking line noise. Retry standard!");
+      alert(e?.message || "Transmission conflict: Matchmaking line noise. Retry standard!");
     }
+  };
+
+  // Build the question pool the same way the old server did
+  const buildDuelQuestions = async (
+    duelExam: string,
+    duelSubject: string,
+    numQuestions: number,
+  ): Promise<any[]> => {
+    const fallback: any[] = [
+      { id: "s_q1", subject: "Physics", exam: "IOE", question: "What is the equivalent resistance of three identical 9 ohm resistors connected in parallel?", options: ["27 ohms", "9 ohms", "3 ohms", "1 ohm"], correctIndex: 2, explanation: "1/Rp = 3/9 = 1/3 so Rp = 3 ohms." },
+      { id: "s_q2", subject: "Chemistry", exam: "BOTH", question: "Which of the following elements has the lowest electronegativity?", options: ["Fluorine", "Oxygen", "Lithium", "Cesium"], correctIndex: 3, explanation: "Cesium has the lowest electronegativity in the periodic table." },
+      { id: "s_q3", subject: "Mathematics", exam: "IOE", question: "Find the general solution of dy/dx = y/x.", options: ["y = c / x", "y = c * x", "y = x + c", "y^2 = x^2 + c"], correctIndex: 1, explanation: "Separable: ln|y| = ln|x| + c so y = c*x." },
+      { id: "s_q4", subject: "Biology", exam: "CEE", question: "Which cell organelle is known as the suicidal bag of the cell?", options: ["Mitochondria", "Lysosome", "Ribosome", "Golgi Body"], correctIndex: 1, explanation: "Lysosomes contain hydrolytic enzymes." },
+      { id: "s_q5", subject: "Physics", exam: "CEE", question: "The pitch of sound depends primarily on which variable?", options: ["Frequency", "Amplitude", "Velocity", "Waveform"], correctIndex: 0, explanation: "Pitch is the perception of frequency." },
+      { id: "s_q6", subject: "Chemistry", exam: "BOTH", question: "What is the oxidation state of sulfur in H2SO4?", options: ["+2", "+4", "+6", "-2"], correctIndex: 2, explanation: "2(1) + x + 4(-2) = 0 → x = +6." },
+    ];
+
+    const { data: community } = await supabase.from("community_questions").select("*");
+    const communityMapped = (community || []).map((q: any) => ({
+      id: q.id,
+      subject: q.subject,
+      exam: q.exam,
+      question: q.question,
+      options: q.options,
+      correctIndex: q.correct_index,
+      explanation: q.explanation,
+    }));
+
+    let pool = [...communityMapped, ...fallback];
+    if (duelSubject !== "All") {
+      pool = pool.filter((q) => q.subject.toLowerCase() === duelSubject.toLowerCase());
+    }
+    if (duelExam !== "BOTH") {
+      pool = pool.filter((q) => q.exam === "BOTH" || q.exam.toLowerCase() === duelExam.toLowerCase());
+    }
+    if (pool.length === 0) pool = fallback;
+    return pool.sort(() => 0.5 - Math.random()).slice(0, numQuestions);
   };
 
   // Action: Respond to incoming challenge
   const handleRespondInvite = async (inv: any, accept: boolean) => {
-    // Clear list item locally
-    setIncomingInvites(prev => prev.filter(i => i.lobbyId !== inv.lobbyId));
+    setIncomingInvites((prev) => prev.filter((i) => i.lobbyId !== inv.lobbyId));
 
     try {
-      const res = await fetch("/api/invites/respond", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lobbyId: inv.lobbyId,
-          responderId: userId,
-          action: accept ? "ACCEPTED" : "DECLINED"
-        })
-      });
-      const data = await res.json();
-      if (data.success && accept) {
-        setIsLobbyHost(false);
-        setAwaitingLobbyAccept(false);
-        setActiveLobby({ lobbyId: inv.lobbyId, status: "ACTIVE", questions: data.questions || [] });
+      if (!accept) {
+        await supabase.from("duel_invites").update({ status: "DECLINED" }).eq("lobby_id", inv.lobbyId);
+        const { data: lobby } = await supabase
+          .from("duel_lobbies")
+          .select("host_id")
+          .eq("lobby_id", inv.lobbyId)
+          .maybeSingle();
+        if (lobby) {
+          await supabase
+            .from("duel_lobbies")
+            .update({ status: "COMPLETED", winner_id: lobby.host_id })
+            .eq("lobby_id", inv.lobbyId);
+        }
+        return;
       }
+
+      await supabase.from("duel_invites").update({ status: "ACCEPTED" }).eq("lobby_id", inv.lobbyId);
+
+      const { data: lobby } = await supabase
+        .from("duel_lobbies")
+        .select("*")
+        .eq("lobby_id", inv.lobbyId)
+        .maybeSingle();
+      if (!lobby) return;
+
+      const questions = await buildDuelQuestions(lobby.exam, lobby.subject, lobby.num_questions);
+
+      await supabase
+        .from("duel_lobbies")
+        .update({
+          status: "ACTIVE",
+          guest_name: aspirantName,
+          guest_score: userScore,
+          questions: questions as any,
+        })
+        .eq("lobby_id", inv.lobbyId);
+
+      setIsLobbyHost(false);
+      setAwaitingLobbyAccept(false);
+      setActiveLobby({ lobbyId: inv.lobbyId, status: "ACTIVE", questions });
     } catch (e) {
       console.error("Response error for duel challenge", e);
     }
   };
 
-  // Action: Register or Login with Unique ID
+  // Action: Sign in / Sign up via Lovable Cloud
   const handleRegisterProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegError("");
 
-    if (!regUid.trim() || !regName.trim()) {
-      setRegError("Please provide both a unique User ID and your Display Name.");
+    if (!authEmail.trim() || !authPassword) {
+      setRegError("Please provide email and password.");
+      return;
+    }
+    if (authMode === "signup" && !authDisplayName.trim()) {
+      setRegError("Please choose a display name.");
       return;
     }
 
-    const cleanedId = regUid.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
-    if (cleanedId.length < 3) {
-      setRegError("User ID must be at least 3 chars (letters, numbers, underscores).");
-      return;
-    }
-
+    setAuthBusy(true);
     try {
-      const res = await fetch("/api/users/login-register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: cleanedId, name: regName.trim() })
-      });
-      const data = await res.json();
-      if (data.success) {
-        localStorage.setItem("arena_user_id", cleanedId);
-        localStorage.setItem("arena_player_name", data.user.name);
-        
-        setUserId(cleanedId);
-        setAspirantName(data.user.name);
-        setUserScore(data.user.score);
-        setUserRank(data.rank);
-        
-        setShowRegModal(false);
-        playSynthSound("correct");
+      if (authMode === "signup") {
+        const { error } = await supabase.auth.signUp({
+          email: authEmail.trim(),
+          password: authPassword,
+          options: {
+            emailRedirectTo: `${window.location.origin}/`,
+            data: { display_name: authDisplayName.trim() },
+          },
+        });
+        if (error) {
+          setRegError(error.message);
+        } else {
+          setRegError("Account created. If email confirmation is required, check your inbox, then sign in.");
+          setAuthMode("signin");
+        }
       } else {
-        setRegError(data.error || "ID matches someone else's system index. Pick a different unique ID.");
+        const { error } = await supabase.auth.signInWithPassword({
+          email: authEmail.trim(),
+          password: authPassword,
+        });
+        if (error) setRegError(error.message);
+        else playSynthSound("correct");
       }
-    } catch {
-      setRegError("Registration server connection error. Please try again.");
+    } catch (err: any) {
+      setRegError(err?.message || "Authentication failed.");
+    } finally {
+      setAuthBusy(false);
     }
+  };
+
+  const handleSignOut = async () => {
+    if (userId) {
+      await supabase.from("online_presence").delete().eq("user_id", userId);
+    }
+    await supabase.auth.signOut();
+  };
   };
 
   // Community Question contribution states
