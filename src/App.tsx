@@ -32,6 +32,16 @@ import {
   GameScoreState,
   MultiplayerSubmode
 } from "./types";
+import { supabase } from "./integrations/supabase/client";
+
+function getRankTier(score: number): string {
+  if (score < 1100) return "🥉 Bronze Aspirant";
+  if (score < 1300) return "🥈 Silver Gladiator";
+  if (score < 1600) return "🥇 Gold Specialist";
+  if (score < 2000) return "🏆 Platinum Master";
+  return "⚡ Pulchowk Titan";
+}
+
 
 export default function App() {
   // Game Setup Configurations
