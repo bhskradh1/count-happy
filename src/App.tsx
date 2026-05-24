@@ -99,9 +99,7 @@ export default function App() {
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
 
   // --- Real Persistent Backend State Hooks & Dynamic Forms ---
-  const [aspirantName, setAspirantName] = useState<string>(() => {
-    return localStorage.getItem("arena_player_name") || "Aspirant " + Math.floor(100 + Math.random() * 900);
-  });
+  const [aspirantName, setAspirantName] = useState<string>("Aspirant");
   const [activeTab, setActiveTab] = useState<string>("BATTLE"); // BATTLE | LEADERBOARD | HISTORY | CONTRIBUTE
   const [dbScores, setDbScores] = useState<any[]>([]);
   const [dbHistory, setDbHistory] = useState<any[]>([]);
@@ -109,13 +107,17 @@ export default function App() {
   const [enableCommunityDB, setEnableCommunityDB] = useState<boolean>(true);
   const [hasSubmittedThisGame, setHasSubmittedThisGame] = useState<boolean>(true);
 
-  // --- PERSISTENT USER IDENTIFICATION & MATCHMAKING ONLINE ENGINE ---
-  const [userId, setUserId] = useState<string>(() => localStorage.getItem("arena_user_id") || "");
+  // --- LOVABLE CLOUD AUTH STATE ---
+  const [userId, setUserId] = useState<string>(""); // auth.users.id (uuid)
   const [userScore, setUserScore] = useState<number>(1000);
   const [userRank, setUserRank] = useState<string>("🥉 Bronze Aspirant");
-  const [showRegModal, setShowRegModal] = useState<boolean>(!localStorage.getItem("arena_user_id"));
-  const [regName, setRegName] = useState<string>("");
-  const [regUid, setRegUid] = useState<string>("");
+  const [authReady, setAuthReady] = useState<boolean>(false);
+  const [showRegModal, setShowRegModal] = useState<boolean>(false);
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [authEmail, setAuthEmail] = useState<string>("");
+  const [authPassword, setAuthPassword] = useState<string>("");
+  const [authDisplayName, setAuthDisplayName] = useState<string>("");
+  const [authBusy, setAuthBusy] = useState<boolean>(false);
   const [regError, setRegError] = useState<string>("");
 
   const [onlineUsersList, setOnlineUsersList] = useState<any[]>([]);
@@ -125,7 +127,7 @@ export default function App() {
   const [isLobbyHost, setIsLobbyHost] = useState<boolean>(false);
   const [awaitingLobbyAccept, setAwaitingLobbyAccept] = useState<boolean>(false);
   const [inviteStatusMessage, setInviteStatusMessage] = useState<string>("");
-  
+
   // Track consecutive wrong choices
   const [p1ConsecutiveWrong, setP1ConsecutiveWrong] = useState<number>(0);
   const [p2ConsecutiveWrong, setP2ConsecutiveWrong] = useState<number>(0);
@@ -135,25 +137,51 @@ export default function App() {
   const [lastActionSpeed, setLastActionSpeed] = useState<number>(1.0);
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // Auto-connect and load user details on boot if we have a saved ID
+  // ---- Auth bootstrap: subscribe BEFORE getSession ----
   useEffect(() => {
-    if (userId) {
-      fetch("/api/users/login-register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, name: aspirantName })
-      })
-      .then(r => r.json())
-      .then(data => {
-        if (data.success && data.user) {
-          setAspirantName(data.user.name);
-          setUserScore(data.user.score);
-          setUserRank(data.rank);
-        }
-      })
-      .catch(e => console.error("Identity synchronization failed", e));
-    }
-  }, [userId]);
+    const loadProfile = async (uid: string) => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("display_name, score, rank")
+        .eq("id", uid)
+        .maybeSingle();
+      if (data) {
+        setAspirantName(data.display_name);
+        setUserScore(data.score);
+        setUserRank(data.rank);
+      }
+    };
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      const uid = session?.user?.id || "";
+      setUserId(uid);
+      setShowRegModal(!uid);
+      if (uid) setTimeout(() => loadProfile(uid), 0);
+    });
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const uid = session?.user?.id || "";
+      setUserId(uid);
+      setShowRegModal(!uid);
+      if (uid) loadProfile(uid);
+      setAuthReady(true);
+    });
+
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // Keep profile.score in sync when the user's local score changes (best-effort)
+  useEffect(() => {
+    if (!userId) return;
+    const newRank = getRankTier(userScore);
+    setUserRank(newRank);
+    supabase
+      .from("profiles")
+      .update({ score: userScore, rank: newRank })
+      .eq("id", userId)
+      .then(() => {});
+  }, [userScore, userId]);
+
 
   // Loop A: Polling Presence and New Invites
   useEffect(() => {
