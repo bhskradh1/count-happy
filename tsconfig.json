@@ -24,5 +24,7 @@
     "noEmit": true,
     "noImplicitAny": false,
     "types": ["react", "react-dom", "node"]
-  }
+  },
+  "include": ["src", "vite.config.ts"],
+  "exclude": ["supabase", "node_modules", "dist", "server.ts"]
 }
