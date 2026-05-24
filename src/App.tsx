@@ -542,7 +542,7 @@ export default function App() {
     }
     await supabase.auth.signOut();
   };
-  };
+
 
   // Community Question contribution states
   const [isSubmittingQuestion, setIsSubmittingQuestion] = useState<boolean>(false);
