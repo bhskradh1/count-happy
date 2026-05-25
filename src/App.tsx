@@ -156,16 +156,24 @@ export default function App() {
       const uid = session?.user?.id || "";
       setUserId(uid);
       setShowRegModal(!uid);
+      setAuthReady(true);
       if (uid) setTimeout(() => loadProfile(uid), 0);
     });
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      const uid = session?.user?.id || "";
-      setUserId(uid);
-      setShowRegModal(!uid);
-      if (uid) loadProfile(uid);
-      setAuthReady(true);
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        const uid = session?.user?.id || "";
+        setUserId(uid);
+        setShowRegModal(!uid);
+        if (uid) loadProfile(uid);
+      })
+      .catch(() => {
+        setUserId("");
+        setShowRegModal(true);
+        setRegError("Please sign in to continue.");
+      })
+      .finally(() => setAuthReady(true));
 
     return () => sub.subscription.unsubscribe();
   }, []);
