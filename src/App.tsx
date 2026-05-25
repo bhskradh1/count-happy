@@ -2528,38 +2528,94 @@ export default function App() {
               <span className="text-[9px] font-mono tracking-widest text-emerald-400 bg-emerald-950/40 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase">
                 Gladiator Candidate Index
               </span>
-              <h2 className="font-display font-bold text-xl text-white">Create Arena Profile</h2>
+              <h2 className="font-display font-bold text-xl text-white">
+                {authMode === "signup" ? "Create Arena Profile" : "Enter the Arena"}
+              </h2>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Choose a unique ID to save your champion standings on the persistent leaderboard, and invite other online players for real-time duels.
+                {authMode === "signup"
+                  ? "Sign up to save standings on the persistent leaderboard and challenge online players in real time."
+                  : "Sign in to continue your run, sync stats across devices, and join live duels."}
               </p>
             </div>
 
-            <form onSubmit={handleRegisterProfile} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-mono text-slate-400 uppercase block">Unique Arena User ID</label>
-                <div className="relative">
-                  <span className="absolute left-2.5 top-2 text-slate-500 font-mono text-xs">@</span>
+            <button
+              type="button"
+              disabled={authBusy}
+              onClick={async () => {
+                setRegError("");
+                setAuthBusy(true);
+                try {
+                  const { lovable } = await import("@/integrations/lovable");
+                  const result = await lovable.auth.signInWithOAuth("google", {
+                    redirect_uri: window.location.origin,
+                  });
+                  if (result.error) {
+                    setRegError(result.error.message || "Google sign-in failed.");
+                    setAuthBusy(false);
+                    return;
+                  }
+                  if (result.redirected) return;
+                  playSynthSound("correct");
+                } catch (err: any) {
+                  setRegError(err?.message || "Google sign-in failed.");
+                } finally {
+                  setAuthBusy(false);
+                }
+              }}
+              className="w-full py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-semibold text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+            >
+              <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
+                <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.9 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z"/>
+                <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 12 24 12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/>
+                <path fill="#4CAF50" d="M24 44c5.2 0 10-2 13.6-5.2l-6.3-5.2C29.3 35 26.8 36 24 36c-5.3 0-9.7-3.1-11.3-7.6l-6.5 5C9.6 39.6 16.2 44 24 44z"/>
+                <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.6l6.3 5.2C41 35.2 44 30 44 24c0-1.2-.1-2.3-.4-3.5z"/>
+              </svg>
+              Continue with Google
+            </button>
+
+            <div className="flex items-center gap-2 text-[10px] font-mono text-slate-600 uppercase">
+              <div className="flex-1 h-px bg-slate-800" />
+              or email
+              <div className="flex-1 h-px bg-slate-800" />
+            </div>
+
+            <form onSubmit={handleRegisterProfile} className="space-y-3">
+              {authMode === "signup" && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-mono text-slate-400 uppercase block">Display Name</label>
                   <input
                     type="text"
                     required
-                    value={regUid}
-                    onChange={(e) => setRegUid(e.target.value)}
-                    placeholder="e.g. sujal_ioe"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-1.5 pl-6 pr-3 text-xs text-emerald-400 placeholder:text-slate-700 focus:outline-none focus:border-emerald-500 font-mono font-bold"
+                    value={authDisplayName}
+                    onChange={(e) => setAuthDisplayName(e.target.value)}
+                    placeholder="e.g. Sujal Devkota"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-xs text-white placeholder:text-slate-700 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
-                <span className="text-[9px] text-slate-500 block leading-tight">Must be unique, at least 3 characters. Letters, numbers, underscores only.</span>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-mono text-slate-400 uppercase block">Email</label>
+                <input
+                  type="email"
+                  required
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-xs text-white placeholder:text-slate-700 focus:outline-none focus:border-emerald-500"
+                />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-mono text-slate-405 uppercase block">Gladiator Display Name</label>
+                <label className="text-[10px] font-mono text-slate-400 uppercase block">Password</label>
                 <input
-                  type="text"
+                  type="password"
                   required
-                  value={regName}
-                  onChange={(e) => setRegName(e.target.value)}
-                  placeholder="e.g. Sujal Devkota"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-xs text-white placeholder:text-slate-705 focus:outline-none focus:border-emerald-500"
+                  minLength={6}
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-xs text-white placeholder:text-slate-700 focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
@@ -2571,9 +2627,23 @@ export default function App() {
 
               <button
                 type="submit"
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-450 hover:to-teal-400 text-slate-950 font-display font-black tracking-widest text-xs transition-all shadow-lg cursor-pointer"
+                disabled={authBusy}
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-display font-black tracking-widest text-xs transition-all shadow-lg cursor-pointer disabled:opacity-50"
               >
-                AUTHORIZE PROFILE & ENTER ARENA
+                {authBusy ? "…" : authMode === "signup" ? "CREATE ACCOUNT" : "SIGN IN"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode(authMode === "signup" ? "signin" : "signup");
+                  setRegError("");
+                }}
+                className="w-full text-[11px] text-slate-400 hover:text-emerald-400 transition-colors"
+              >
+                {authMode === "signup"
+                  ? "Already have an account? Sign in"
+                  : "New here? Create an account"}
               </button>
             </form>
           </div>
