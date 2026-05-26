@@ -137,46 +137,18 @@ export default function App() {
   const [lastActionSpeed, setLastActionSpeed] = useState<number>(1.0);
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // ---- Auth bootstrap: subscribe BEFORE getSession ----
+  // ---- Auth disabled: auto-assign a local guest identity ----
   useEffect(() => {
-    const loadProfile = async (uid: string) => {
-      const { data } = await supabase
-        .from("profiles")
-        .select("display_name, score, rank")
-        .eq("id", uid)
-        .maybeSingle();
-      if (data) {
-        setAspirantName(data.display_name);
-        setUserScore(data.score);
-        setUserRank(data.rank);
-      }
-    };
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      const uid = session?.user?.id || "";
-      setUserId(uid);
-      setShowRegModal(!uid);
-      setAuthReady(true);
-      if (uid) setTimeout(() => loadProfile(uid), 0);
-    });
-
-    supabase.auth
-      .getSession()
-      .then(({ data: { session } }) => {
-        const uid = session?.user?.id || "";
-        setUserId(uid);
-        setShowRegModal(!uid);
-        if (uid) loadProfile(uid);
-      })
-      .catch(() => {
-        setUserId("");
-        setShowRegModal(true);
-        setRegError("Please sign in to continue.");
-      })
-      .finally(() => setAuthReady(true));
-
-    return () => sub.subscription.unsubscribe();
+    let uid = localStorage.getItem("guest_uid") || "";
+    if (!uid) {
+      uid = (crypto as any).randomUUID ? crypto.randomUUID() : `guest-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+      localStorage.setItem("guest_uid", uid);
+    }
+    setUserId(uid);
+    setShowRegModal(false);
+    setAuthReady(true);
   }, []);
+
 
   // Keep profile.score in sync when the user's local score changes (best-effort)
   useEffect(() => {
