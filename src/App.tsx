@@ -137,17 +137,47 @@ export default function App() {
   const [lastActionSpeed, setLastActionSpeed] = useState<number>(1.0);
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // ---- Auth disabled: auto-assign a local guest identity ----
+  // ---- Auth bootstrap: subscribe BEFORE getSession ----
   useEffect(() => {
-    let uid = localStorage.getItem("guest_uid") || "";
-    if (!uid) {
-      uid = (crypto as any).randomUUID ? crypto.randomUUID() : `guest-${Math.random().toString(36).slice(2)}-${Date.now()}`;
-      localStorage.setItem("guest_uid", uid);
-    }
-    setUserId(uid);
-    setShowRegModal(false);
-    setAuthReady(true);
+    const loadProfile = async (uid: string) => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("display_name, score, rank")
+        .eq("id", uid)
+        .maybeSingle();
+      if (data) {
+        setAspirantName(data.display_name);
+        setUserScore(data.score);
+        setUserRank(data.rank);
+      }
+    };
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      const uid = session?.user?.id || "";
+      setUserId(uid);
+      setShowRegModal(!uid);
+      setAuthReady(true);
+      if (uid) setTimeout(() => loadProfile(uid), 0);
+    });
+
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        const uid = session?.user?.id || "";
+        setUserId(uid);
+        setShowRegModal(!uid);
+        if (uid) loadProfile(uid);
+      })
+      .catch(() => {
+        setUserId("");
+        setShowRegModal(true);
+        setRegError("Please sign in to continue.");
+      })
+      .finally(() => setAuthReady(true));
+
+    return () => sub.subscription.unsubscribe();
   }, []);
+
 
 
   // Keep profile.score in sync when the user's local score changes (best-effort)
@@ -2500,7 +2530,102 @@ export default function App() {
         </div>
       )}
 
-      {/* Auth disabled — registration modal removed */}
+      {/* REGISTRATION / SIGN-IN MODAL */}
+      {(showRegModal || !authReady) && (
+        <div className="fixed inset-0 z-[100] bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5 shadow-2xl relative animate-scaleIn">
+            <div className="text-center space-y-1.5">
+              <span className="text-[9px] font-mono tracking-widest text-emerald-400 bg-emerald-950/40 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase">
+                Gladiator Candidate Index
+              </span>
+              <h2 className="font-display font-bold text-xl text-white">
+                {!authReady ? "Loading Arena Access" : authMode === "signup" ? "Create Arena Profile" : "Enter the Arena"}
+              </h2>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                {!authReady
+                  ? "Preparing secure email and password sign-in."
+                  : authMode === "signup"
+                  ? "Sign up to save standings on the persistent leaderboard and challenge online players in real time."
+                  : "Sign in to continue your run, sync stats across devices, and join live duels."}
+              </p>
+              {authReady && (
+                <p className="text-[10px] text-amber-400/80 leading-relaxed pt-1">
+                  If sign-in fails inside Preview, open the published site at <span className="font-mono">apti.lovable.app</span> — Preview's fetch proxy can block auth requests.
+                </p>
+              )}
+            </div>
+
+            <form onSubmit={handleRegisterProfile} className="space-y-3">
+              {authMode === "signup" && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-mono text-slate-400 uppercase block">Display Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={authDisplayName}
+                    onChange={(e) => setAuthDisplayName(e.target.value)}
+                    placeholder="e.g. Sujal Devkota"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-xs text-white placeholder:text-slate-700 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-mono text-slate-400 uppercase block">Email</label>
+                <input
+                  type="email"
+                  required
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-xs text-white placeholder:text-slate-700 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-mono text-slate-400 uppercase block">Password</label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-2 px-3 text-xs text-white placeholder:text-slate-700 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              {regError && (
+                <div className="p-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded font-mono text-[10px] leading-relaxed">
+                  {regError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={authBusy}
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-display font-black tracking-widest text-xs transition-all shadow-lg cursor-pointer disabled:opacity-50"
+              >
+                {authBusy ? "…" : authMode === "signup" ? "CREATE ACCOUNT" : "SIGN IN"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode(authMode === "signup" ? "signin" : "signup");
+                  setRegError("");
+                }}
+                className="w-full text-[11px] text-slate-400 hover:text-emerald-400 transition-colors"
+              >
+                {authMode === "signup"
+                  ? "Already have an account? Sign in"
+                  : "New here? Create an account"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
 
 
       {/* 3. INCOMING CHALLENGES SLIDE-OUT PANEL HUD */}
